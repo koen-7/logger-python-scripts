@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OPNsense Log Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0e1a;
+    --surface:  #0f1629;
+    --card:     #141b2e;
+    --border:   #1e2d4a;
+    --accent:   #00d4ff;
+    --accent2:  #ff6b35;
+    --green:    #00ff9d;
+    --red:      #ff3366;
+    --amber:    #ffbb00;
+    --purple:   #a855f7;
+    --teal:     #2dd4bf;
+    --text:     #e2eaf8;
+    --muted:    #5a6a8a;
+    --font-ui:  'Syne', sans-serif;
+    --font-mono:'JetBrains Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font-ui); min-height: 100vh; overflow-x: hidden; }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background-image: linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px; pointer-events: none; z-index: 0;
+  }
+  #app { position: relative; z-index: 1; }
+
+  /* HEADER */
+  header { display: flex; align-items: center; justify-content: space-between; padding: 20px 32px; border-bottom: 1px solid var(--border); background: rgba(10,14,26,0.9); backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 100; }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon { width: 36px; height: 36px; background: var(--accent); clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); animation: pulse-glow 3s ease-in-out infinite; }
+  @keyframes pulse-glow { 0%,100% { box-shadow: 0 0 12px var(--accent); } 50% { box-shadow: 0 0 28px var(--accent), 0 0 48px rgba(0,212,255,0.3); } }
+  .logo h1 { font-size: 18px; font-weight: 800; letter-spacing: 0.05em; }
+  .logo h1 span { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .live-badge { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--green); letter-spacing: 0.1em; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+  #last-updated { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+
+  /* TABS */
+  .tab-bar { display: flex; gap: 4px; padding: 16px 32px 0; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--font-ui); font-size: 13px; font-weight: 600; padding: 10px 20px; cursor: pointer; letter-spacing: 0.04em; transition: all 0.15s; margin-bottom: -1px; }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-btn.dns-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* MAIN */
+  main { padding: 28px 32px; display: flex; flex-direction: column; gap: 24px; }
+
+  /* STAT CARDS */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+  .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; transition: border-color 0.2s, transform 0.2s; }
+  .stat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--accent-color, var(--accent)); }
+  .stat-card.squid   { --accent-color: var(--amber); }
+  .stat-card.alert   { --accent-color: var(--red); }
+  .stat-card.blocked { --accent-color: var(--accent2); }
+  .stat-card.total   { --accent-color: var(--purple); }
+  .stat-card.dns     { --accent-color: var(--teal); }
+  .stat-label { font-size: 10px; font-weight: 600; letter-spacing: 0.15em; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; }
+  .stat-value { font-family: var(--font-mono); font-size: 36px; font-weight: 700; color: var(--text); line-height: 1; }
+  .stat-sub { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+  /* CHARTS */
+  .charts-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .chart-title { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
+  .chart-wrap { position: relative; height: 200px; }
+
+  /* CONTROLS */
+  .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .filter-group { display: flex; gap: 6px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+  .filter-btn { background: none; border: none; color: var(--muted); font-family: var(--font-mono); font-size: 11px; padding: 5px 12px; border-radius: 5px; cursor: pointer; letter-spacing: 0.06em; transition: all 0.15s; }
+  .filter-btn:hover { color: var(--text); }
+  .filter-btn.active { background: var(--accent); color: #000; font-weight: 700; }
+  .filter-btn.active.squid { background: var(--amber); }
+  .filter-btn.active.suricata { background: var(--red); color: #fff; }
+  .search-wrap { flex: 1; min-width: 200px; }
+  .search-wrap input { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--font-mono); font-size: 12px; padding: 8px 14px; outline: none; transition: border-color 0.15s; }
+  .search-wrap input:focus { border-color: var(--accent); }
+  .search-wrap input::placeholder { color: var(--muted); }
+
+  /* TABLE */
+  .table-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .table-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .table-title { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .row-count { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+  .table-wrap { overflow-x: auto; max-height: 460px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
+  thead th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid rgba(30,45,74,0.6); transition: background 0.1s; animation: row-in 0.2s ease both; }
+  @keyframes row-in { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
+  tbody tr:hover { background: rgba(0,212,255,0.04); }
+  td { padding: 9px 16px; vertical-align: middle; white-space: nowrap; }
+  td.message { white-space: normal; max-width: 360px; word-break: break-all; }
+
+  /* BADGES */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .badge-source-squid     { background: rgba(255,187,0,0.15);  color: var(--amber);  border: 1px solid rgba(255,187,0,0.3); }
+  .badge-source-suricata  { background: rgba(255,51,102,0.15); color: var(--red);    border: 1px solid rgba(255,51,102,0.3); }
+  .badge-source-dns_block { background: rgba(45,212,191,0.15); color: var(--teal);   border: 1px solid rgba(45,212,191,0.3); }
+  .badge-sev-critical  { background: rgba(255,51,102,0.2);  color: var(--red);    border: 1px solid rgba(255,51,102,0.4); }
+  .badge-sev-high      { background: rgba(255,107,53,0.2);  color: var(--accent2);border: 1px solid rgba(255,107,53,0.4); }
+  .badge-sev-medium    { background: rgba(255,187,0,0.15);  color: var(--amber);  border: 1px solid rgba(255,187,0,0.3); }
+  .badge-sev-blocked   { background: rgba(255,51,102,0.15); color: var(--red);    border: 1px solid rgba(255,51,102,0.3); }
+  .badge-sev-access    { background: rgba(0,212,255,0.1);   color: var(--accent); border: 1px solid rgba(0,212,255,0.2); }
+  .badge-sev-dns       { background: rgba(168,85,247,0.15); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); }
+  .badge-sev-http      { background: rgba(0,255,157,0.1);   color: var(--green);  border: 1px solid rgba(0,255,157,0.2); }
+  .badge-sev-tls       { background: rgba(0,255,157,0.1);   color: var(--green);  border: 1px solid rgba(0,255,157,0.2); }
+  .badge-sev-low       { background: rgba(90,106,138,0.2);  color: var(--muted);  border: 1px solid rgba(90,106,138,0.3); }
+
+  .badge-user { background: rgba(168,85,247,0.15); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); font-size: 10px; }
+  .user { min-width: 80px; }
+  .ip { color: var(--accent); }
+  .domain { color: var(--teal); }
+  .ts { color: var(--muted); font-size: 11px; }
+  .empty { text-align: center; color: var(--muted); padding: 48px; font-size: 13px; }
+
+  /* TOP LIST BARS */
+  .bar-list { display: flex; flex-direction: column; gap: 8px; }
+  .ip-bar { display: flex; align-items: center; gap: 10px; }
+  .ip-label { font-family: var(--font-mono); font-size: 11px; color: var(--accent); width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+  .ip-label.domain { color: var(--teal); width: 200px; }
+  .ip-track { flex: 1; background: var(--border); border-radius: 2px; height: 4px; overflow: hidden; }
+  .ip-fill  { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.5s ease; }
+  .ip-fill.teal { background: var(--teal); }
+  .ip-count { font-family: var(--font-mono); font-size: 11px; color: var(--muted); width: 36px; text-align: right; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">
+    <div class="logo-icon"></div>
+    <h1>OPN<span>sense</span> · Log Dashboard</h1>
+  </div>
+  <div class="header-right">
+    <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+    <div id="last-updated">—</div>
+  </div>
+</header>
+
+<!-- TAB BAR -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('overview', this)">Overview</button>
+  <button class="tab-btn" onclick="switchTab('suricata', this)">Suricata</button>
+  <button class="tab-btn" onclick="switchTab('squid', this)">Squid</button>
+  <button class="tab-btn dns-tab" onclick="switchTab('dns', this)">DNS Blocks</button>
+</div>
+
+<!-- ═══════════════════════════════ OVERVIEW TAB ═══════════════════════════════ -->
+<div id="tab-overview" class="tab-content active">
+<main>
+  <div class="stat-grid">
+    <div class="stat-card total"><div class="stat-label">Total events</div><div class="stat-value" id="stat-total">—</div><div class="stat-sub">all sources</div></div>
+    <div class="stat-card"><div class="stat-label">Suricata events</div><div class="stat-value" id="stat-suricata">—</div><div class="stat-sub">IDS/IPS</div></div>
+    <div class="stat-card squid"><div class="stat-label">Squid requests</div><div class="stat-value" id="stat-squid">—</div><div class="stat-sub">proxy access</div></div>
+    <div class="stat-card alert"><div class="stat-label">Critical alerts</div><div class="stat-value" id="stat-critical">—</div><div class="stat-sub">high severity</div></div>
+    <div class="stat-card dns"><div class="stat-label">DNS blocks</div><div class="stat-value" id="stat-dns">—</div><div class="stat-sub">Unbound NXDOMAIN</div></div>
+  </div>
+  <div class="charts-row">
+    <div class="chart-card"><div class="chart-title">Events over last 24 hours</div><div class="chart-wrap"><canvas id="timeline-chart"></canvas></div></div>
+    <div class="chart-card">
+      <div class="chart-title">Top source IPs</div>
+      <div class="bar-list" id="top-ips-list"></div>
+      <div class="chart-title" style="margin-top:20px">Top users</div>
+      <div class="bar-list" id="top-users-list"></div>
+    </div>
+  </div>
+  <div class="controls">
+    <div class="filter-group">
+      <button class="filter-btn active" onclick="setSource(this, '')">All</button>
+      <button class="filter-btn suricata" onclick="setSource(this, 'suricata')">Suricata</button>
+      <button class="filter-btn squid" onclick="setSource(this, 'squid')">Squid</button>
+    </div>
+    <div class="search-wrap"><input type="text" id="search-input" placeholder="Search IP, URL, signature…" oninput="debouncedLoad()"></div>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><div class="table-title">Log entries</div><div class="row-count" id="row-count">—</div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Source</th><th>Severity</th><th>Src IP</th><th>User</th><th>Dst IP</th><th>Port</th><th>Message</th></tr></thead>
+        <tbody id="log-body"><tr><td colspan="7" class="empty">Waiting for logs…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+</div>
+
+<!-- ═══════════════════════════════ SURICATA TAB ══════════════════════════════ -->
+<div id="tab-suricata" class="tab-content">
+<main>
+  <div class="stat-grid">
+    <div class="stat-card total"><div class="stat-label">Total alerts</div><div class="stat-value" id="sur-total">—</div><div class="stat-sub">all event types</div></div>
+    <div class="stat-card alert"><div class="stat-label">High severity</div><div class="stat-value" id="sur-high">—</div></div>
+    <div class="stat-card squid"><div class="stat-label">Medium severity</div><div class="stat-value" id="sur-medium">—</div></div>
+    <div class="stat-card"><div class="stat-label">Low severity</div><div class="stat-value" id="sur-low">—</div></div>
+  </div>
+  <div class="controls">
+    <div class="search-wrap"><input type="text" id="sur-search" placeholder="Search signature, IP…" oninput="debouncedSuricata()"></div>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><div class="table-title">Suricata alerts</div><div class="row-count" id="sur-count">—</div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Severity</th><th>Src IP</th><th>User</th><th>Dst IP</th><th>Port</th><th>Signature</th></tr></thead>
+        <tbody id="sur-body"><tr><td colspan="6" class="empty">Waiting for alerts…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+</div>
+
+<!-- ════════════════════════════════ SQUID TAB ════════════════════════════════ -->
+<div id="tab-squid" class="tab-content">
+<main>
+  <div class="stat-grid">
+    <div class="stat-card total"><div class="stat-label">Total requests</div><div class="stat-value" id="sq-total">—</div></div>
+    <div class="stat-card blocked"><div class="stat-label">Blocked</div><div class="stat-value" id="sq-blocked">—</div><div class="stat-sub">DENIED requests</div></div>
+    <div class="stat-card"><div class="stat-label">Allowed</div><div class="stat-value" id="sq-allowed">—</div></div>
+  </div>
+  <div class="controls">
+    <div class="search-wrap"><input type="text" id="sq-search" placeholder="Search URL, IP…" oninput="debouncedSquid()"></div>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><div class="table-title">Squid proxy log</div><div class="row-count" id="sq-count">—</div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Severity</th><th>Client IP</th><th>User</th><th>Method / URL</th></tr></thead>
+        <tbody id="sq-body"><tr><td colspan="4" class="empty">Waiting for logs…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+</div>
+
+<!-- ════════════════════════════════ DNS TAB ══════════════════════════════════ -->
+<div id="tab-dns" class="tab-content">
+<main>
+  <div class="stat-grid">
+    <div class="stat-card dns"><div class="stat-label">Total DNS blocks</div><div class="stat-value" id="dns-total">—</div><div class="stat-sub">NXDOMAIN responses</div></div>
+    <div class="stat-card"><div class="stat-label">Unique domains</div><div class="stat-value" id="dns-unique">—</div><div class="stat-sub">blocked domains</div></div>
+    <div class="stat-card"><div class="stat-label">Top blocked</div><div class="stat-value" id="dns-top-domain" style="font-size:14px;margin-top:4px">—</div></div>
+  </div>
+  <div class="charts-row">
+    <div class="chart-card"><div class="chart-title">DNS blocks over last 24 hours</div><div class="chart-wrap"><canvas id="dns-timeline-chart"></canvas></div></div>
+    <div class="chart-card">
+      <div class="chart-title">Top blocked domains</div>
+      <div class="bar-list" id="dns-domains-list"></div>
+    </div>
+  </div>
+  <div class="controls">
+    <div class="search-wrap"><input type="text" id="dns-search" placeholder="Search domain, client IP…" oninput="debouncedDns()"></div>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><div class="table-title">Blocked DNS requests</div><div class="row-count" id="dns-count">—</div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Client IP</th><th>User</th><th>Blocked Domain</th></tr></thead>
+        <tbody id="dns-body"><tr><td colspan="3" class="empty">Waiting for DNS blocks…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Top clients making blocked requests</div>
+    <div class="bar-list" id="dns-clients-list"></div>
+  </div>
+</main>
+</div>
+
+</div><!-- #app -->
+
+<script>
+let currentSource = "";
+let timelineChart = null;
+let dnsTimelineChart = null;
+let activeTab = "overview";
+
+// ── Tab switching ────────────────────────────────────────────────────────────
+function switchTab(tab, btn) {
+  activeTab = tab;
+  document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
+  document.getElementById("tab-" + tab).classList.add("active");
+  btn.classList.add("active");
+  if (tab === "dns") loadDns();
+  if (tab === "suricata") loadSuricata();
+  if (tab === "squid") loadSquid();
+}
+
+// ── Debounce ─────────────────────────────────────────────────────────────────
+let debTimer;
+function debouncedLoad()     { clearTimeout(debTimer); debTimer = setTimeout(loadLogs, 350); }
+function debouncedSuricata() { clearTimeout(debTimer); debTimer = setTimeout(loadSuricata, 350); }
+function debouncedSquid()    { clearTimeout(debTimer); debTimer = setTimeout(loadSquid, 350); }
+function debouncedDns()      { clearTimeout(debTimer); debTimer = setTimeout(loadDns, 350); }
+
+// ── Source filter (overview) ─────────────────────────────────────────────────
+function setSource(btn, src) {
+  currentSource = src;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  loadLogs();
+}
+
+// ── Overview logs ─────────────────────────────────────────────────────────────
+async function loadLogs() {
+  const search = document.getElementById("search-input").value.trim();
+  const params = new URLSearchParams({ limit: 200 });
+  if (currentSource) params.set("source", currentSource);
+  if (search) params.set("search", search);
+  try {
+    const rows = await fetch("/api/logs?" + params).then(r => r.json());
+    renderTable(rows, "log-body", "row-count", renderOverviewRow);
+  } catch(e) { console.error(e); }
+}
+
+function renderOverviewRow(r) {
+  return `<tr>
+    <td class="ts">${fmtTs(r.ts)}</td>
+    <td><span class="badge badge-source-${r.source}">${r.source}</span></td>
+    <td><span class="badge badge-sev-${r.severity}">${r.severity}</span></td>
+    <td class="ip">${r.src_ip||"—"}</td>
+    <td class="user">${r.src_user ? `<span class="badge badge-user">${esc(r.src_user)}</span>` : "—"}</td>
+    <td class="ip">${r.dst_ip||"—"}</td>
+    <td>${r.port||"—"}</td>
+    <td class="message">${esc(r.message||"")}</td>
+  </tr>`;
+}
+
+// ── Stats (overview) ─────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const d = await fetch("/api/stats").then(r => r.json());
+    let total = 0, squid = 0, suricata = 0;
+    d.totals.forEach(r => { total += r.n; if(r.source==="squid") squid=r.n; if(r.source==="suricata") suricata=r.n; });
+    setText("stat-total", fmt(total));
+    setText("stat-squid", fmt(squid));
+    setText("stat-suricata", fmt(suricata));
+    let critical = 0;
+    d.severities.forEach(r => { if(["high","critical"].includes(r.severity)) critical += r.n; });
+    setText("stat-critical", fmt(critical));
+    renderTopIPs(d.top_ips, "top-ips-list", false);
+    renderTopUsers(d.top_users || []);
+    renderTimeline(d.timeline);
+    document.getElementById("last-updated").textContent = "updated " + new Date().toLocaleTimeString();
+  } catch(e) { console.error(e); }
+}
+
+// ── Suricata tab ──────────────────────────────────────────────────────────────
+async function loadSuricata() {
+  const search = document.getElementById("sur-search").value.trim();
+  const params = new URLSearchParams({ source: "suricata", limit: 200 });
+  if (search) params.set("search", search);
+  try {
+    const rows = await fetch("/api/logs?" + params).then(r => r.json());
+    let high=0, medium=0, low=0;
+    rows.forEach(r => { if(r.severity==="high"||r.severity==="critical") high++; else if(r.severity==="medium") medium++; else low++; });
+    setText("sur-total", fmt(rows.length));
+    setText("sur-high", fmt(high));
+    setText("sur-medium", fmt(medium));
+    setText("sur-low", fmt(low));
+    renderTable(rows, "sur-body", "sur-count", r => `<tr>
+      <td class="ts">${fmtTs(r.ts)}</td>
+      <td><span class="badge badge-sev-${r.severity}">${r.severity}</span></td>
+      <td class="ip">${r.src_ip||"—"}</td>
+      <td class="user">${r.src_user ? `<span class="badge badge-user">${esc(r.src_user)}</span>` : "—"}</td>
+      <td class="ip">${r.dst_ip||"—"}</td>
+      <td>${r.port||"—"}</td>
+      <td class="message">${esc(r.message||"")}</td>
+    </tr>`);
+  } catch(e) { console.error(e); }
+}
+
+// ── Squid tab ─────────────────────────────────────────────────────────────────
+async function loadSquid() {
+  const search = document.getElementById("sq-search").value.trim();
+  const params = new URLSearchParams({ source: "squid", limit: 200 });
+  if (search) params.set("search", search);
+  try {
+    const rows = await fetch("/api/logs?" + params).then(r => r.json());
+    let blocked=0, allowed=0;
+    rows.forEach(r => { if(r.severity==="blocked") blocked++; else allowed++; });
+    setText("sq-total", fmt(rows.length));
+    setText("sq-blocked", fmt(blocked));
+    setText("sq-allowed", fmt(allowed));
+    renderTable(rows, "sq-body", "sq-count", r => `<tr>
+      <td class="ts">${fmtTs(r.ts)}</td>
+      <td><span class="badge badge-sev-${r.severity}">${r.severity}</span></td>
+      <td class="ip">${r.src_ip||"—"}</td>
+      <td class="user">${r.src_user ? `<span class="badge badge-user">${esc(r.src_user)}</span>` : "—"}</td>
+      <td class="message">${esc(r.message||"")}</td>
+    </tr>`);
+  } catch(e) { console.error(e); }
+}
+
+// ── DNS tab ───────────────────────────────────────────────────────────────────
+async function loadDns() {
+  const search = document.getElementById("dns-search").value.trim();
+  const params = new URLSearchParams({ limit: 200 });
+  if (search) params.set("search", search);
+  try {
+    const d = await fetch("/api/dns?" + params).then(r => r.json());
+
+    setText("dns-total", fmt(d.total || 0));
+    setText("dns-unique", fmt(d.top_domains.length));
+    if (d.top_domains.length) {
+      const top = d.top_domains[0].message.replace("BLOCKED: ", "");
+      setText("dns-top-domain", top.length > 25 ? top.slice(0,25)+"…" : top);
+    }
+
+    // Update overview DNS stat too
+    setText("stat-dns", fmt(d.total || 0));
+
+    renderTopIPs(d.top_domains.map(r => ({
+      src_ip: r.message.replace("BLOCKED: ", ""), n: r.n
+    })), "dns-domains-list", true);
+
+    const clientsWithUser = (d.top_clients || []).map(r => ({
+      src_ip: r.src_user ? `${r.src_ip} (${r.src_user})` : r.src_ip, n: r.n
+    }));
+    renderTopIPs(clientsWithUser, "dns-clients-list", false);
+    renderDnsTimeline(d.timeline);
+
+    renderTable(d.logs, "dns-body", "dns-count", r => `<tr>
+      <td class="ts">${fmtTs(r.ts)}</td>
+      <td class="ip">${r.src_ip||"—"}</td>
+      <td class="user">${r.src_user ? `<span class="badge badge-user">${esc(r.src_user)}</span>` : "—"}</td>
+      <td class="domain">${esc((r.message||"").replace("BLOCKED: ",""))}</td>
+    </tr>`);
+  } catch(e) { console.error(e); }
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+function renderTimeline(data) {
+  const hours = [...new Set(data.map(r => r.hour))].sort();
+  const squidData    = hours.map(h => { const r = data.find(d=>d.hour===h&&d.source==="squid");    return r?r.n:0; });
+  const suricataData = hours.map(h => { const r = data.find(d=>d.hour===h&&d.source==="suricata"); return r?r.n:0; });
+  const dnsData      = hours.map(h => { const r = data.find(d=>d.hour===h&&d.source==="dns_block"); return r?r.n:0; });
+  const labels = hours.map(h => h.slice(11,16));
+  if (timelineChart) {
+    timelineChart.data.labels = labels;
+    timelineChart.data.datasets[0].data = suricataData;
+    timelineChart.data.datasets[1].data = squidData;
+    timelineChart.data.datasets[2].data = dnsData;
+    timelineChart.update("none"); return;
+  }
+  timelineChart = new Chart(document.getElementById("timeline-chart").getContext("2d"), {
+    type: "line",
+    data: { labels, datasets: [
+      { label:"Suricata", data:suricataData, borderColor:"#ff3366", backgroundColor:"rgba(255,51,102,0.08)", borderWidth:2, pointRadius:2, tension:0.4, fill:true },
+      { label:"Squid",    data:squidData,    borderColor:"#ffbb00", backgroundColor:"rgba(255,187,0,0.06)",  borderWidth:2, pointRadius:2, tension:0.4, fill:true },
+      { label:"DNS Blocks",  data:dnsData,      borderColor:"#2dd4bf", backgroundColor:"rgba(45,212,191,0.06)", borderWidth:2, pointRadius:2, tension:0.4, fill:true },
+    ]},
+    options: chartOpts()
+  });
+}
+
+function renderDnsTimeline(data) {
+  const hours  = data.map(r => r.hour.slice(11,16));
+  const counts = data.map(r => r.n);
+  if (dnsTimelineChart) {
+    dnsTimelineChart.data.labels = hours;
+    dnsTimelineChart.data.datasets[0].data = counts;
+    dnsTimelineChart.update("none"); return;
+  }
+  dnsTimelineChart = new Chart(document.getElementById("dns-timeline-chart").getContext("2d"), {
+    type: "bar",
+    data: { labels: hours, datasets: [
+      { label:"Blocks", data:counts, backgroundColor:"rgba(45,212,191,0.3)", borderColor:"#2dd4bf", borderWidth:1, borderRadius:3 }
+    ]},
+    options: chartOpts()
+  });
+}
+
+function chartOpts() {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode:"index", intersect:false },
+    plugins: { legend: { labels: { color:"#5a6a8a", font:{ family:"'JetBrains Mono'", size:11 }, boxWidth:12 } } },
+    scales: {
+      x: { ticks:{ color:"#5a6a8a", font:{ family:"'JetBrains Mono'", size:10 } }, grid:{ color:"rgba(30,45,74,0.5)" } },
+      y: { ticks:{ color:"#5a6a8a", font:{ family:"'JetBrains Mono'", size:10 } }, grid:{ color:"rgba(30,45,74,0.5)" }, beginAtZero:true }
+    }
+  };
+}
+
+function renderTopUsers(users) {
+  const el = document.getElementById("top-users-list");
+  if (!el) return;
+  if (!users || !users.length) { el.innerHTML = '<div class="empty" style="padding:16px">No mapped users yet</div>'; return; }
+  const max = users[0].n;
+  el.innerHTML = users.map(r => `
+    <div class="ip-bar">
+      <div class="ip-label" style="color:var(--purple)">${esc(r.src_user)}</div>
+      <div class="ip-track"><div class="ip-fill" style="width:${Math.round(r.n/max*100)}%;background:var(--purple)"></div></div>
+      <div class="ip-count">${r.n}</div>
+    </div>`).join("");
+}
+
+function renderTopIPs(ips, elId, isDomain) {
+  const el = document.getElementById(elId);
+  if (!ips || !ips.length) { el.innerHTML = '<div class="empty" style="padding:16px">No data yet</div>'; return; }
+  const max = ips[0].n;
+  el.innerHTML = ips.map(r => `
+    <div class="ip-bar">
+      <div class="ip-label ${isDomain?'domain':''}">${esc(r.src_ip)}</div>
+      <div class="ip-track"><div class="ip-fill ${isDomain?'teal':''}" style="width:${Math.round(r.n/max*100)}%"></div></div>
+      <div class="ip-count">${r.n}</div>
+    </div>`).join("");
+}
+
+// ── Generic table renderer ────────────────────────────────────────────────────
+function renderTable(rows, tbodyId, countId, rowFn) {
+  const tbody = document.getElementById(tbodyId);
+  const cols = tbody.closest("table").querySelectorAll("thead th").length;
+  if (!rows || !rows.length) { tbody.innerHTML = `<tr><td colspan="${cols}" class="empty">No entries found</td></tr>`; return; }
+  tbody.innerHTML = rows.map(rowFn).join("");
+  if (countId) document.getElementById(countId).textContent = rows.length + " rows";
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmt(n) { return n >= 1000 ? (n/1000).toFixed(1)+"k" : String(n); }
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function fmtTs(ts) { if(!ts) return "—"; try { return new Date(ts + "Z").toLocaleTimeString(); } catch { return ts.slice(0,19); } }
+function setText(id, val) { const el = document.getElementById(id); if(el) el.textContent = val; }
+
+// ── Init + polling ────────────────────────────────────────────────────────────
+loadStats();
+loadLogs();
+loadDns();
+setInterval(() => {
+  loadStats();
+  if (activeTab === "overview") loadLogs();
+  if (activeTab === "suricata") loadSuricata();
+  if (activeTab === "squid")    loadSquid();
+  if (activeTab === "dns")      loadDns();
+}, 5000);
+</script>
+</body>
+</html>
