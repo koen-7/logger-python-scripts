@@ -25,7 +25,7 @@ SYSLOG_PORT    = 5140
 DNS_SYSLOG_PORT = 5141    # UDP port for Unbound DNS syslog from OPNsense
 
 HEADSCALE_URL     = "https://headscale.project.home"
-HEADSCALE_API_KEY = "hskey-api-qLRDrbWOu7nA-TRUtgaHWQXOn47MLIOg0nOwI2BIbyNy7mfcZJMvSW3_RDiTjRXmfD1cv27SnQNti"
+HEADSCALE_API_KEY = "key"
 HEADSCALE_REFRESH = 300   # seconds between Headscale IP→user map refreshes
 
 DB_PATH = "logs.db"
